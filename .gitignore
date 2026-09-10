@@ -1,0 +1,11 @@
+# Rust
+target/
+
+# Node / Electron (the app lands in PLAN-2)
+node_modules/
+dist/
+out/
+
+# Editors and OS
+.DS_Store
+*.log
