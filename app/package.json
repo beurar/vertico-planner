@@ -1,0 +1,23 @@
+{
+  "name": "vertico-planner-app",
+  "version": "1.0.0",
+  "description": "Electron Gantt planner for the vertico-planner SpacetimeDB database",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "start": "node build.mjs && electron .",
+    "smoke": "node build.mjs && electron . --smoke",
+    "verify": "esbuild tools/client-roundtrip.ts --bundle --platform=node --format=esm --outfile=dist/client-roundtrip.mjs --log-level=warning && node dist/client-roundtrip.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "spacetimedb": "2.8.3"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The renderer loads its own bundle and talks to one loopback socket. Nothing else: no remote
+      script, no remote style, no remote image, no other host to connect to.
+
+      `'unsafe-eval'` is not a choice — the SpacetimeDB TypeScript SDK 2.8.3 compiles a BSATN
+      encoder and decoder per row type with `Function(...)`, so without it every row that arrives
+      throws `EvalError` and the chart stays empty. It is scoped by everything else here: the only
+      script that can run is this app's own bundle, loaded from disk, and the only endpoint it can
+      reach is the planner database on loopback.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src ws://127.0.0.1:3000 http://127.0.0.1:3000 ws://localhost:3000 http://localhost:3000"
+    />
+    <title>Vertico Planner</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <span class="brand-name">Vertico Planner</span>
+        </div>
+
+        <div class="topbar-actions">
+          <button class="btn" id="btnNewTask" type="button">+ Task</button>
+          <button class="btn" id="btnNewLane" type="button">+ Lane</button>
+          <button class="btn" id="btnNewPerson" type="button">+ Person</button>
+          <span class="sep"></span>
+          <button class="btn icon" id="btnZoomOut" type="button" title="Narrower days">&minus;</button>
+          <button class="btn icon" id="btnZoomIn" type="button" title="Wider days">+</button>
+          <button class="btn" id="btnToday" type="button">Today</button>
+          <span class="sep"></span>
+          <button class="btn" id="btnExport" type="button">Export…</button>
+          <button class="btn" id="btnImport" type="button">Import…</button>
+          <button class="btn danger" id="btnWipe" type="button">New plan</button>
+        </div>
+
+        <div class="status" id="status" data-state="connecting">
+          <span class="status-dot"></span>
+          <span class="status-text">Connecting…</span>
+        </div>
+      </header>
+
+      <div class="offline-banner" id="offlineBanner" hidden>
+        <strong>Not connected.</strong>
+        <span id="offlineDetail"
+          >The planner database is unreachable, so nothing you change here is being
+          saved.</span
+        >
+        <button class="btn" id="btnRetry" type="button">Retry now</button>
+      </div>
+
+      <main class="workspace">
+        <section class="chart-pane">
+          <div class="chart-scroll" id="chartScroll">
+            <div class="chart-inner" id="chartInner">
+              <div class="timeline" id="timeline"></div>
+              <div class="lanes" id="lanes"></div>
+            </div>
+          </div>
+          <p class="chart-empty" id="chartEmpty" hidden></p>
+        </section>
+
+        <aside class="rail">
+          <section class="panel people-panel">
+            <header class="panel-head">
+              <h2>Personnel</h2>
+              <span class="hint">drag onto a bar to assign</span>
+            </header>
+            <div class="people" id="people"></div>
+          </section>
+
+          <section class="panel inspector-panel">
+            <header class="panel-head">
+              <h2 id="inspectorTitle">Nothing selected</h2>
+            </header>
+            <div class="inspector" id="inspector"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <div class="toasts" id="toasts"></div>
+    <div class="drag-ghost" id="dragGhost" hidden></div>
+
+    <script src="dist/renderer.js"></script>
+  </body>
+</html>
