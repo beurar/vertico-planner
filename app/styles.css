@@ -29,6 +29,15 @@
   box-sizing: border-box;
 }
 
+/*
+ * `hidden` has to win. Any rule here that sets `display` — and the offline banner's `flex` is
+ * one — outranks the user agent's `[hidden] { display: none }`, which is how a banner reading
+ * "Not connected" ends up sitting above a connected chart.
+ */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   height: 100%;
@@ -512,8 +521,46 @@ body {
   pointer-events: none;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   font-weight: 600;
+  /* The label crosses two grounds at once -- the progress fill and the bare bar -- so it carries
+     its own contrast rather than trusting either. Steadier than a plate, and costs no layout. */
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.85), 0 0 6px rgb(0 0 0 / 0.55);
+}
+
+/* At rest a name that does not fit is cut with an ellipsis. Hover or select the bar and, IF the
+   name genuinely overflows (chart.ts measures scrollWidth and sets .pans), it slides far enough
+   to read the end and comes back. It pauses at both ends: a marquee that never rests cannot be
+   read, which is the usual reason marquees are hated. */
+.bar-label .bar-name {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+
+.bar-label.pans .bar-name {
+  max-width: none;
+  text-overflow: clip;
+}
+
+.bar:hover .bar-label.pans .bar-name,
+.bar.selected .bar-label.pans .bar-name {
+  animation: bar-name-pan 6s ease-in-out infinite;
+}
+
+@keyframes bar-name-pan {
+  0%, 16%  { transform: translateX(0); }
+  52%, 68% { transform: translateX(calc(-100% + 100px)); }
+  100%     { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar:hover .bar-label.pans .bar-name,
+  .bar.selected .bar-label.pans .bar-name { animation: none; }
+  /* No motion, so the name still has to be reachable: the selected bar lets it run past its
+     own edge rather than hiding the half you wanted to read. */
+  .bar.selected .bar-label.pans { overflow: visible; z-index: 3; }
 }
 
 .bar-badge {

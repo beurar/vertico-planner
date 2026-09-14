@@ -143,6 +143,22 @@ function renderLanes(app: PlannerApp, host: HTMLElement, trackW: number): void {
   }
 
   host.append(renderDependencies(app, trackW));
+
+  // A label only pans if it actually overflows, and that is a layout question the DOM can
+  // only answer once the bars are mounted. One pass per render, not one per bar: this reads
+  // scrollWidth, which forces layout, and doing it inside renderBar would do so mid-build.
+  requestAnimationFrame(() => markPanningLabels(host));
+}
+
+/// Tags every task label whose text is wider than the room it has, so the CSS may pan it.
+/// Cleared first, because a bar that grew (a resize, a zoom to week view) no longer overflows
+/// and a stale marquee on a label that now fits reads as a bug.
+function markPanningLabels(host: HTMLElement): void {
+  for (const label of Array.from(host.querySelectorAll<HTMLElement>('.bar-label'))) {
+    const name = label.querySelector<HTMLElement>('.bar-name');
+    if (!name) continue;
+    label.classList.toggle('pans', name.scrollWidth > label.clientWidth + 1);
+  }
 }
 
 function renderLane(app: PlannerApp, lane: Lane, trackW: number): HTMLElement {
@@ -254,8 +270,11 @@ function renderBar(app: PlannerApp, task: Task, lane: Lane): HTMLElement {
     bar.append(strip);
   }
 
-  // The percentage slider. It only fits on a bar with room for it; the inspector always has one.
-  if (width >= 120) {
+  // The percentage slider rides ONLY the selected bar. A live slider on every bar meant a
+  // stray click while panning or reaching for a drag handle silently rewrote a task's
+  // progress, and a reducer round-trip is not something to fire by accident. Select the task
+  // and the slider appears here; the inspector always carries one either way.
+  if (selected && width >= 120) {
     const slider = el('input', {
       class: 'bar-slider',
       type: 'range',
