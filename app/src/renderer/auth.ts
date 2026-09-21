@@ -1,10 +1,16 @@
 // The passphrase gate's UI.
 //
-// It is never shown proactively — a browser that already holds an authorised identity (the same
-// token `connection.ts` persists to `localStorage`) never sees it again, because the server
-// already knows that identity. It is shown on demand, the first time a mutating reducer refuses
-// with the server's "not authenticated" sentence: reading the plan works with no gate at all,
-// only changing it does.
+// Blocking, not a scrim: nothing behind `.gate-scrim` is visible until the passphrase is
+// accepted, and there is no way to dismiss it without one. `boot()` shows it immediately unless
+// this browser already unlocked once — `UNLOCKED_KEY` in `localStorage` is what's checked, purely
+// a client-side memory so the same browser isn't asked again. It is not itself a security
+// boundary: the WebSocket underneath keeps working the whole time this screen is up, so this
+// keeps a casual visitor out, not a motivated one reading the page's own source.
+//
+// It also still opens reactively — the first time a mutating reducer refuses with the server's
+// "not authenticated" sentence. That path exists for the one case the local flag can't cover: this
+// browser's stored identity was authorised once, but the server no longer agrees (the database
+// was wiped, or the passphrase rotated).
 
 import type { PlannerApp } from './types';
 import { el } from './ui';
@@ -14,6 +20,24 @@ const AUTH_REQUIRED_MESSAGE = 'Enter the shared passphrase first';
 
 export function isAuthRefusal(text: string): boolean {
   return text === AUTH_REQUIRED_MESSAGE;
+}
+
+const UNLOCKED_KEY = 'vertico-planner.unlocked';
+
+export function isUnlockedLocally(): boolean {
+  try {
+    return window.localStorage.getItem(UNLOCKED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markUnlockedLocally(): void {
+  try {
+    window.localStorage.setItem(UNLOCKED_KEY, '1');
+  } catch {
+    /* A missing storage is not a reason to refuse to run — it just means asking again next visit. */
+  }
 }
 
 let open = false;
@@ -35,7 +59,7 @@ export function showPassphraseGate(app: PlannerApp): void {
   const form = el('form', { class: 'gate-form' }, [
     el('h2', { class: 'gate-title', text: 'Vertico Planner' }),
     el('p', { class: 'gate-hint' }, [
-      'This plan is shared with the team. Ask whoever set it up for the passphrase — you can look around without it, but changes need it.',
+      'This plan is private to the team. Enter the shared passphrase to open it.',
     ]),
     input,
     error,
@@ -55,16 +79,17 @@ export function showPassphraseGate(app: PlannerApp): void {
     const passphrase = input.value;
     if (!passphrase) return;
     if (!app.conn) {
-      error.textContent = 'Not connected — wait for the status dot to turn green and try again.';
+      error.textContent = 'Still connecting — try again in a moment.';
       return;
     }
     submit.setAttribute('disabled', '');
     error.textContent = '';
     try {
       await app.conn.reducers.authenticate({ passphrase });
+      markUnlockedLocally();
       scrim.remove();
       open = false;
-      app.say('Unlocked. Try that again.');
+      app.requestRender();
     } catch (err) {
       error.textContent = err instanceof Error ? err.message : String(err);
       submit.removeAttribute('disabled');

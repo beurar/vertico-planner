@@ -9,7 +9,7 @@
 //     nothing on the server, so the next render paints the old values and the bar snaps back.
 //   * A refusal is a sentence written for a human. It is shown verbatim.
 
-import { isAuthRefusal, showPassphraseGate } from './auth';
+import { isAuthRefusal, isUnlockedLocally, showPassphraseGate } from './auth';
 import { HEAD_W, createTaskAt, installChartMetrics, renderChart, zoomAt } from './chart';
 import { PlannerConnection, refusalText } from './connection';
 import { today } from './dates';
@@ -154,6 +154,12 @@ async function boot(): Promise<void> {
       hosts.scroll.scrollLeft = Math.max(0, x - hosts.scroll.clientWidth / 2);
     },
   };
+
+  // This plan is private to the team: nothing below is visible until the passphrase is entered,
+  // unless this browser already did that once (see auth.ts's UNLOCKED_KEY). The connection still
+  // opens underneath — it has to, since that's what the gate's own submit calls `authenticate`
+  // through — but the gate has no dismiss button, so nothing here is reachable without it.
+  if (!isUnlockedLocally()) showPassphraseGate(app);
 
   function render(): void {
     // A render mid-gesture would rebuild the element the pointer is captured on. Every gesture

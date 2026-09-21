@@ -5,10 +5,11 @@
 A small Gantt planner — personnel, lanes, task bars, drag-to-assign — backed by SpacetimeDB.
 
 The team version above runs entirely in the browser (no install) and talks to a shared database
-on SpacetimeDB **Maincloud**, so everyone sees the same plan update live. Opening a bar or a lane
-works for anyone with the link; making a change asks for the shared passphrase once per browser
-(see [Access control](#access-control)). The page checks for a newer deploy every few minutes and
-offers a one-click reload — see [Staying up to date](#staying-up-to-date).
+on SpacetimeDB **Maincloud**, so everyone sees the same plan update live. The whole page is
+private to the team: the first visit from any browser asks for the shared passphrase before
+showing anything, and remembers it after that (see [Access control](#access-control), including
+what this gate does and doesn't actually protect). The page also checks for a newer deploy every
+few minutes and offers a one-click reload — see [Staying up to date](#staying-up-to-date).
 
 This repository holds **the module** (`module/`, the whole write path) and **the app** (`app/`,
 one renderer shared by an Electron build for local development and the browser build that's
@@ -41,13 +42,27 @@ by hand with `spacetime sql`, not by deleting and re-running `init`.
 
 ### Access control
 
-`app_secret` and `authorized` (see `module/src/tables.rs`) are deliberately **not** `public` —
-SpacetimeDB never sends a private table to any client, by subscription or by query, so this is
-enforced by the server, not by the app hiding a button. Every mutating reducer starts with
-`require_authenticated`; reading the plan (the four tables the chart draws from) has no gate at
-all. `authenticate(passphrase)` adds the caller's identity to `authorized` on a correct guess, and
-that identity — one per browser, via the token `connection.ts` keeps in `localStorage` — stays
-authorised until the database is wiped, so nobody re-enters it every visit.
+Two layers, deliberately different in what they actually guarantee.
+
+**Writes are server-enforced.** `app_secret` and `authorized` (see `module/src/tables.rs`) are
+deliberately **not** `public` — SpacetimeDB never sends a private table to any client, by
+subscription or by query, so this is enforced by the server, not by the app hiding a button.
+Every mutating reducer starts with `require_authenticated`. `authenticate(passphrase)` adds the
+caller's identity to `authorized` on a correct guess, and that identity — one per browser, via the
+token `connection.ts` keeps in `localStorage` — stays authorised until the database is wiped.
+
+**The view itself is only client-blocked, not private.** `auth.ts` shows a full-screen,
+undismissable passphrase gate over the whole app the moment it boots, unless this browser already
+unlocked once (a second `localStorage` flag, separate from the identity token). This keeps a
+casual visitor out. It is **not** real confidentiality: the four data tables (`person`, `lane`,
+`task`, `assignment`) stay `public` — reads were never worth gating server-side for this app — so
+the WebSocket connection underneath is live the whole time the gate is up, and anyone reading the
+page's own source could query it directly, bypassing the UI entirely. Treat the gate as "keeps the
+board off the public internet's casual radar," not as encryption.
+
+Because the "already unlocked" flag is new, a teammate who authenticated before this existed
+(by editing something, back when only writes were gated) will still see the gate once — their
+identity is still authorised server-side, but this browser's local flag is not.
 
 The passphrase itself is **not** in this repository, on purpose — a real credential does not
 belong in source control, even a public one. `app_secret.passphrase` starts empty on a fresh
@@ -58,9 +73,15 @@ database's owner:
 spacetime sql --server maincloud vertico-planner-d6f218 "UPDATE app_secret SET passphrase = '...' WHERE id = 1"
 ```
 
-Share the value with the team over whatever channel you already trust with internal-only info
-(not a public place) — anyone downstream of that message can make changes; anyone with the link
-alone can only look.
+If the database already existed before `app_secret` did (an `UPDATE` against a table that has no
+row yet silently affects zero rows — `init` only seeds it on a *fresh* database), `INSERT` instead:
+
+```bash
+spacetime sql --server maincloud vertico-planner-d6f218 "INSERT INTO app_secret (id, passphrase) VALUES (1, '...')"
+```
+
+Share the value with the team over whatever channel you already trust with internal-only info —
+not a public place.
 
 ### Staying up to date
 

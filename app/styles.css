@@ -216,6 +216,8 @@ body {
 
 /* ---------------------------------------------------------------- passphrase gate */
 
+/* Opaque, not a dimmer: this is what "block the view until the key is entered" means, so nothing
+   of the chart may show through behind it. */
 .gate-scrim {
   position: fixed;
   inset: 0;
@@ -223,7 +225,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgb(7 11 10 / 0.72);
+  background: var(--ground);
   animation: gate-scrim-in 180ms ease both;
 }
 
