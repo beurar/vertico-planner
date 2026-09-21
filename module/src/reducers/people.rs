@@ -2,7 +2,7 @@
 
 use spacetimedb::{reducer, ReducerContext, Table};
 
-use crate::reducers::{delete_assignments_where, require_person};
+use crate::reducers::{delete_assignments_where, require_authenticated, require_person};
 use crate::tables::*;
 use crate::validate;
 
@@ -14,6 +14,7 @@ pub fn create_person(
     avatar_colour: String,
     initials: String,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let name = validate::name(&name, "Person")?;
     let role = validate::optional_text(&role, "Role")?;
     let avatar_colour = validate::colour(&avatar_colour, "Avatar colour")?;
@@ -39,6 +40,7 @@ pub fn update_person(
     avatar_colour: String,
     initials: String,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_person(ctx, person_id)?;
     let name = validate::name(&name, "Person")?;
     let role = validate::optional_text(&role, "Role")?;
@@ -59,6 +61,7 @@ pub fn update_person(
 /// exists, so keeping them would leave the chart drawing an avatar for nobody.
 #[reducer]
 pub fn delete_person(ctx: &ReducerContext, person_id: u64) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_person(ctx, person_id)?;
     let dropped = delete_assignments_where(ctx, |a| a.person_id == person_id);
     ctx.db.person().id().delete(person_id);

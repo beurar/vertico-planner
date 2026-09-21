@@ -44,12 +44,26 @@ const SEED_LANES: [(&str, &str, i32); 4] = [
     ("Release", "#e05c4a", 3),
 ];
 
+/// `app_secret.passphrase` starts empty. Deliberately: a real passphrase does not belong in
+/// source control (even a private repo's history outlives its privacy settings), so there is no
+/// compiled-in default to seed. `authenticate` refuses distinctly while it is empty, and the
+/// owner sets the real value once with
+/// `spacetime sql vertico-planner "UPDATE app_secret SET passphrase = '...' WHERE id = 1"`.
+const APP_SECRET_ROW_ID: u8 = 1;
+
 /// Runs on first publish and on any publish that passes `--delete-data`.
 ///
 /// ⚠ A lifecycle reducer that panics aborts the publish itself, so this one only inserts, and
 /// only into a table it has just found empty.
 #[reducer(init)]
 pub fn init(ctx: &ReducerContext) {
+    if ctx.db.app_secret().id().find(APP_SECRET_ROW_ID).is_none() {
+        ctx.db.app_secret().insert(AppSecret {
+            id: APP_SECRET_ROW_ID,
+            passphrase: String::new(),
+        });
+    }
+
     if ctx.db.lane().count() > 0 {
         return;
     }

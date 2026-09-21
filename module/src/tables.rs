@@ -18,7 +18,7 @@
 //! gets the whole table cheaply, and no base64 blob rides in a database row. Real pictures, if
 //! they are ever wanted, are a file path or an asset store — still not a blob column.
 
-use spacetimedb::table;
+use spacetimedb::{table, Identity};
 
 /// Someone who can be assigned to a task. Drawn top-right in the app as a coloured avatar
 /// bearing [`Person::initials`].
@@ -86,4 +86,29 @@ pub struct Assignment {
     pub id: u64,
     pub task_id: u64,
     pub person_id: u64,
+}
+
+/// The shared passphrase gate. One row (`id = 1`), seeded by `init`.
+///
+/// **Deliberately not `public`.** A private table is never sent to a client under any
+/// circumstance — not by subscription, not by query — so the passphrase never rides the wire to
+/// anyone. Only reducer code running on the server can read this table. Change the value with
+/// `spacetime sql vertico-planner "UPDATE app_secret SET passphrase = '...' WHERE id = 1"`;
+/// there is deliberately no reducer for it, so rotating it cannot itself be gate-crashed.
+#[table(accessor = app_secret)]
+#[derive(Clone, Debug)]
+pub struct AppSecret {
+    #[primary_key]
+    pub id: u8,
+    pub passphrase: String,
+}
+
+/// Identities that have supplied the correct passphrase to `authenticate`, and so may call any
+/// other reducer. Also private, for the same reason: which identities are authorised is nobody's
+/// business but the server's, and there is no client feature that would ever read this table.
+#[table(accessor = authorized)]
+#[derive(Clone, Debug)]
+pub struct Authorized {
+    #[primary_key]
+    pub identity: Identity,
 }

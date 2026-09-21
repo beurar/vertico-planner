@@ -6,7 +6,9 @@
 
 use spacetimedb::{reducer, ReducerContext, Table};
 
-use crate::reducers::{check_predecessor, delete_assignments_where, require_lane, require_task};
+use crate::reducers::{
+    check_predecessor, delete_assignments_where, require_authenticated, require_lane, require_task,
+};
 use crate::tables::*;
 use crate::validate;
 
@@ -20,6 +22,7 @@ pub fn create_task(
     percent_complete: i32,
     predecessor_id: u64,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     require_lane(ctx, lane_id)?;
     let name = validate::name(&name, "Task")?;
     let start_day = validate::start_day(start_day)?;
@@ -61,6 +64,7 @@ pub fn update_task(
     percent_complete: i32,
     predecessor_id: u64,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_task(ctx, task_id)?;
     require_lane(ctx, lane_id)?;
     let name = validate::name(&name, "Task")?;
@@ -89,6 +93,7 @@ pub fn set_task_percent(
     task_id: u64,
     percent_complete: i32,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_task(ctx, task_id)?;
     let percent_complete = validate::percent(percent_complete)?;
     ctx.db.task().id().update(Task {
@@ -101,6 +106,7 @@ pub fn set_task_percent(
 /// Dragging a bar sideways. Duration is untouched, so the bar keeps its width.
 #[reducer]
 pub fn move_task(ctx: &ReducerContext, task_id: u64, start_day: i32) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_task(ctx, task_id)?;
     let start_day = validate::start_day(start_day)?;
     validate::span(start_day, existing.duration_days)?;
@@ -115,6 +121,7 @@ pub fn move_task(ctx: &ReducerContext, task_id: u64, start_day: i32) -> Result<(
 /// left edge is a `move_task` and a `resize_task` in the same gesture.
 #[reducer]
 pub fn resize_task(ctx: &ReducerContext, task_id: u64, duration_days: i32) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_task(ctx, task_id)?;
     let duration_days = validate::duration_days(duration_days)?;
     validate::span(existing.start_day, duration_days)?;
@@ -134,6 +141,7 @@ pub fn move_task_to_lane(
     lane_id: u64,
     start_day: i32,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_task(ctx, task_id)?;
     require_lane(ctx, lane_id)?;
     let start_day = validate::start_day(start_day)?;
@@ -153,6 +161,7 @@ pub fn set_task_predecessor(
     task_id: u64,
     predecessor_id: u64,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_task(ctx, task_id)?;
     check_predecessor(ctx, task_id, predecessor_id)?;
     ctx.db.task().id().update(Task {
@@ -168,6 +177,7 @@ pub fn set_task_predecessor(
 /// empty space.
 #[reducer]
 pub fn delete_task(ctx: &ReducerContext, task_id: u64) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_task(ctx, task_id)?;
 
     let dependents: Vec<Task> = ctx

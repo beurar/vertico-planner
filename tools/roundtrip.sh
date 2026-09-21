@@ -15,10 +15,17 @@
 #     below is looked up by name (`id_of`) rather than assumed to be 1.
 #   * a negative argument like `-1` is parsed by clap as a flag unless `--` comes first, hence
 #     `spacetime call -y -- <db> <reducer> ...` throughout.
+#
+# Every mutating reducer now requires the caller to have called `authenticate` first (the shared
+# passphrase gate). This script's own CLI identity authenticates once, near the top, using
+# $ROUNDTRIP_PASSPHRASE — set that env var to whatever `app_secret.passphrase` holds on $DB before
+# running this. The two calls right before it deliberately run *unauthenticated*, to prove the
+# gate actually blocks something.
 
 set -uo pipefail
 
 DB=vertico-planner
+PASSPHRASE="${ROUNDTRIP_PASSPHRASE:?set ROUNDTRIP_PASSPHRASE to the target databases app_secret.passphrase first}"
 PASS=0
 FAIL=0
 
@@ -63,6 +70,12 @@ expect_refusal() {
   fi
 }
 
+echo "== auth gate =="
+expect_refusal "wipe_plan before authenticating" "Enter the shared passphrase first" wipe_plan
+expect_refusal "authenticate wrong passphrase"   "Incorrect passphrase" authenticate '"definitely-not-it"'
+expect_ok      "authenticate"                    authenticate "\"$PASSPHRASE\""
+
+echo
 echo "== reset =="
 expect_ok "wipe_plan" wipe_plan
 

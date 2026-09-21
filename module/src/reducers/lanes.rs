@@ -6,7 +6,7 @@
 
 use spacetimedb::{reducer, ReducerContext, Table};
 
-use crate::reducers::require_lane;
+use crate::reducers::{require_authenticated, require_lane};
 use crate::tables::*;
 use crate::validate;
 
@@ -17,6 +17,7 @@ pub fn create_lane(
     colour: String,
     sort_order: i32,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let name = validate::name(&name, "Lane")?;
     let colour = validate::colour(&colour, "Lane colour")?;
     let sort_order = validate::sort_order(sort_order)?;
@@ -39,6 +40,7 @@ pub fn update_lane(
     colour: String,
     sort_order: i32,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_lane(ctx, lane_id)?;
     let name = validate::name(&name, "Lane")?;
     let colour = validate::colour(&colour, "Lane colour")?;
@@ -57,6 +59,7 @@ pub fn update_lane(
 /// just renamed cannot silently put the old name back.
 #[reducer]
 pub fn set_lane_colour(ctx: &ReducerContext, lane_id: u64, colour: String) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_lane(ctx, lane_id)?;
     let colour = validate::colour(&colour, "Lane colour")?;
     ctx.db.lane().id().update(Lane { colour, ..existing });
@@ -66,6 +69,7 @@ pub fn set_lane_colour(ctx: &ReducerContext, lane_id: u64, colour: String) -> Re
 /// Drag-to-reorder's write path, for the same reason as `set_lane_colour`.
 #[reducer]
 pub fn reorder_lane(ctx: &ReducerContext, lane_id: u64, sort_order: i32) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_lane(ctx, lane_id)?;
     let sort_order = validate::sort_order(sort_order)?;
     ctx.db.lane().id().update(Lane {
@@ -82,6 +86,7 @@ pub fn reorder_lane(ctx: &ReducerContext, lane_id: u64, sort_order: i32) -> Resu
 /// the user's decision to make.
 #[reducer]
 pub fn delete_lane(ctx: &ReducerContext, lane_id: u64) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let existing = require_lane(ctx, lane_id)?;
     let held = ctx.db.task().task_by_lane().filter(lane_id).count();
     if held > 0 {

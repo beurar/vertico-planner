@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 use spacetimedb::{reducer, ReducerContext, SpacetimeType, Table};
 
+use crate::reducers::require_authenticated;
 use crate::tables::*;
 use crate::validate;
 
@@ -62,6 +63,7 @@ pub struct AssignmentImport {
 /// Empty every table. The **New plan** command, and the first half of an import.
 #[reducer]
 pub fn wipe_plan(ctx: &ReducerContext) -> Result<(), String> {
+    require_authenticated(ctx)?;
     wipe(ctx);
     spacetimedb::log::info!("plan wiped");
     Ok(())
@@ -95,6 +97,7 @@ pub fn import_plan(
     tasks: Vec<TaskImport>,
     assignments: Vec<AssignmentImport>,
 ) -> Result<(), String> {
+    require_authenticated(ctx)?;
     wipe(ctx);
 
     let mut person_ids: BTreeMap<u64, u64> = BTreeMap::new();

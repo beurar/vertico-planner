@@ -2,13 +2,14 @@
 
 use spacetimedb::{reducer, ReducerContext, Table};
 
-use crate::reducers::{require_person, require_task};
+use crate::reducers::{require_authenticated, require_person, require_task};
 use crate::tables::*;
 
 /// Refuses a duplicate rather than inserting a second identical row — the same avatar dropped
 /// twice on the same bar is a slip of the mouse, and two rows would draw two avatars.
 #[reducer]
 pub fn assign_person(ctx: &ReducerContext, task_id: u64, person_id: u64) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let task = require_task(ctx, task_id)?;
     let person = require_person(ctx, person_id)?;
 
@@ -35,6 +36,7 @@ pub fn assign_person(ctx: &ReducerContext, task_id: u64, person_id: u64) -> Resu
 
 #[reducer]
 pub fn unassign_person(ctx: &ReducerContext, task_id: u64, person_id: u64) -> Result<(), String> {
+    require_authenticated(ctx)?;
     let task = require_task(ctx, task_id)?;
     let person = require_person(ctx, person_id)?;
 

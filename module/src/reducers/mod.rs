@@ -14,9 +14,43 @@ pub mod people;
 pub mod plan_io;
 pub mod tasks;
 
-use spacetimedb::{ReducerContext, Table};
+use spacetimedb::{reducer, ReducerContext, Table};
 
 use crate::tables::*;
+use crate::APP_SECRET_ROW_ID;
+
+/// The passphrase gate. Every other reducer starts with `require_authenticated(ctx)?` — this is
+/// the only one that doesn't, since it's how an identity gets into `authorized` in the first
+/// place. A wrong guess costs the caller nothing but a refusal; there is no lockout, because the
+/// whole point is one shared door with one shared key, not a per-identity account.
+#[reducer]
+pub fn authenticate(ctx: &ReducerContext, passphrase: String) -> Result<(), String> {
+    let secret = ctx
+        .db
+        .app_secret()
+        .id()
+        .find(APP_SECRET_ROW_ID)
+        .ok_or_else(|| "Server has no passphrase configured".to_string())?;
+    if secret.passphrase.is_empty() {
+        return Err("Server has no passphrase configured yet".to_string());
+    }
+    if passphrase != secret.passphrase {
+        return Err("Incorrect passphrase".to_string());
+    }
+    if ctx.db.authorized().identity().find(ctx.sender()).is_none() {
+        ctx.db.authorized().insert(Authorized { identity: ctx.sender() });
+    }
+    Ok(())
+}
+
+/// Every mutating reducer but `authenticate` itself starts here.
+pub(crate) fn require_authenticated(ctx: &ReducerContext) -> Result<(), String> {
+    if ctx.db.authorized().identity().find(ctx.sender()).is_some() {
+        Ok(())
+    } else {
+        Err("Enter the shared passphrase first".to_string())
+    }
+}
 
 /// Fetch a task or refuse by name. Every reducer that takes a `task_id` starts here, so a stale
 /// id from a client that has drifted out of date produces one recognisable sentence.
