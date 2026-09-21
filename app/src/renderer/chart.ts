@@ -8,6 +8,7 @@
 import {
   dayOfMonth,
   formatDay,
+  fractionOfDay,
   isMonthStart,
   isWeekend,
   lastDay,
@@ -27,6 +28,19 @@ export const HEAD_W = 196;
 const GRIP_W = 10;
 /** Pointer travel, in pixels, below which a press is a click and not a drag. */
 const DRAG_SLOP = 3;
+
+/** Two bars in the same lane whose days overlap are given their own sub-row instead of drawing
+ *  on top of each other — a cutaway, not a collision. */
+const STACK_GAP = 3;
+/** However many sub-rows a lane needs, no bar shrinks past this — thinner than this and there is
+ *  nothing left to read. */
+const MIN_STACK_H = 14;
+/** Horizontal breathing room on each side of a bar: the "little deadspace" a dependency line
+ *  needs to have somewhere to be routed *through* rather than over a block. */
+const BAR_GUTTER = 1.5;
+/** Extra padding added around a bar when treating it as an obstacle for line-routing — keeps a
+ *  routed line from hugging a bar's edge closely enough to read as touching it. */
+const LINE_GUTTER = 3;
 
 export interface ChartHosts {
   scroll: HTMLElement;
@@ -70,6 +84,85 @@ export function zoomAt(
     const targetLeft = (dayUnderPointer - app.originDay) * app.dayWidth + HEAD_W;
     scroll.scrollLeft = Math.max(0, targetLeft - (clientX - rect.left));
   });
+}
+
+/** A bar's rendered rectangle, in the lanes container's own coordinate space (`left` is
+ *  track-relative, `top` is lane-relative — `laneRow * LANE_H + top` is the absolute y). */
+interface BarBox {
+  left: number;
+  width: number;
+  top: number;
+  height: number;
+  laneRow: number;
+}
+
+/**
+ * Assigns each task in a lane to a 0-indexed sub-row so that no two tasks sharing a sub-row
+ * overlap in time. Greedy interval-graph colouring: sorted by start day, each task takes the
+ * lowest sub-row whose most recently placed task has already ended by the time this one starts.
+ */
+function packSubRows(tasks: Task[]): Map<bigint, number> {
+  const sorted = [...tasks].sort((a, b) => {
+    if (a.startDay !== b.startDay) return a.startDay - b.startDay;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  const rowEnds: number[] = [];
+  const rowOf = new Map<bigint, number>();
+  for (const task of sorted) {
+    const endDay = task.startDay + Math.max(1, task.durationDays);
+    let row = rowEnds.findIndex(end => end <= task.startDay);
+    if (row === -1) {
+      row = rowEnds.length;
+      rowEnds.push(endDay);
+    } else {
+      rowEnds[row] = endDay;
+    }
+    rowOf.set(task.id, row);
+  }
+  return rowOf;
+}
+
+/** Divides the lane's usual bar-height allowance evenly across `subRowCount` slots. A lane with
+ *  no overlap (`subRowCount === 1`) gets back exactly today's numbers — this is additive, not a
+ *  redesign of the common case. */
+function stackedBox(subRow: number, subRowCount: number): { top: number; height: number } {
+  const pad = (LANE_H - BAR_H) / 2;
+  if (subRowCount <= 1) return { top: pad, height: BAR_H };
+  const raw = (BAR_H - (subRowCount - 1) * STACK_GAP) / subRowCount;
+  const height = Math.max(MIN_STACK_H, raw);
+  const stride = height + STACK_GAP;
+  return { top: pad + subRow * stride, height };
+}
+
+/** Every task's rendered rectangle, computed once per render and shared by the bars themselves
+ *  and the dependency-arrow router — the one thing both need to agree on is where a block
+ *  actually is. */
+function computeBarBoxes(app: PlannerApp): Map<bigint, BarBox> {
+  const { snapshot, originDay, dayWidth } = app;
+  const boxes = new Map<bigint, BarBox>();
+
+  snapshot.lanes.forEach((lane, laneRow) => {
+    const tasks = snapshot.tasksByLane.get(lane.id) ?? [];
+    const subRowOf = packSubRows(tasks);
+    let subRowCount = 1;
+    for (const row of subRowOf.values()) subRowCount = Math.max(subRowCount, row + 1);
+
+    for (const task of tasks) {
+      const subRow = subRowOf.get(task.id) ?? 0;
+      const { top, height } = stackedBox(subRow, subRowCount);
+      const rawLeft = (task.startDay - originDay) * dayWidth;
+      const rawWidth = Math.max(1, task.durationDays) * dayWidth;
+      boxes.set(task.id, {
+        left: rawLeft + BAR_GUTTER,
+        width: Math.max(4, rawWidth - BAR_GUTTER * 2),
+        top,
+        height,
+        laneRow,
+      });
+    }
+  });
+
+  return boxes;
 }
 
 /** Chooses the window of days to draw, and writes it back onto the app for hit-testing. */
@@ -149,6 +242,7 @@ function renderTimeline(app: PlannerApp, host: HTMLElement, trackW: number): voi
 function renderLanes(app: PlannerApp, host: HTMLElement, trackW: number): void {
   clear(host);
   const { snapshot, originDay, dayCount, dayWidth } = app;
+  const boxes = computeBarBoxes(app);
 
   const grid = el('div', { class: 'grid' });
   grid.style.width = px(trackW);
@@ -171,15 +265,47 @@ function renderLanes(app: PlannerApp, host: HTMLElement, trackW: number): void {
   host.append(grid);
 
   for (const lane of snapshot.lanes) {
-    host.append(renderLane(app, lane, trackW));
+    host.append(renderLane(app, lane, trackW, boxes));
   }
 
-  host.append(renderDependencies(app, trackW));
+  host.append(renderDependencies(app, trackW, boxes));
+
+  // Above everything, including the dependency arrows: a glance has to find "now" without caring
+  // what happens to be plotted on top of it today.
+  if (todayIndex >= 0 && todayIndex < dayCount) {
+    host.append(renderNowLine(app, todayIndex, dayWidth));
+  }
 
   // A label only pans if it actually overflows, and that is a layout question the DOM can
   // only answer once the bars are mounted. One pass per render, not one per bar: this reads
   // scrollWidth, which forces layout, and doing it inside renderBar would do so mid-build.
   requestAnimationFrame(() => markPanningLabels(host));
+}
+
+/**
+ * The precise "now" marker: a glowing line at the actual time of day, riding above every bar and
+ * arrow, with a masked, animated trail fading out behind it (earlier today) so the sweep reads as
+ * motion, not just a static mark. `todayIndex`/`dayWidth` place it in the same track-relative
+ * coordinate space `renderLanes`'s other overlays use; `HEAD_W` shifts it into the lanes
+ * container's own space, since — unlike `.grid`'s children — this sits outside `.grid` on
+ * purpose, to escape its stacking context and actually paint on top.
+ */
+function renderNowLine(app: PlannerApp, todayIndex: number, dayWidth: number): HTMLElement {
+  const frac = fractionOfDay();
+  const layer = el('div', { class: 'now-layer' });
+  layer.style.left = px(HEAD_W + todayIndex * dayWidth);
+  layer.style.width = px(dayWidth);
+  layer.style.height = px(Math.max(1, app.snapshot.lanes.length) * LANE_H);
+
+  const tail = el('div', { class: 'now-tail' });
+  tail.style.width = px(frac * dayWidth);
+  layer.append(tail);
+
+  const line = el('div', { class: 'now-line' });
+  line.style.left = px(frac * dayWidth);
+  layer.append(line);
+
+  return layer;
 }
 
 /// Tags every task label whose text is wider than the room it has, so the CSS may pan it.
@@ -193,7 +319,12 @@ function markPanningLabels(host: HTMLElement): void {
   }
 }
 
-function renderLane(app: PlannerApp, lane: Lane, trackW: number): HTMLElement {
+function renderLane(
+  app: PlannerApp,
+  lane: Lane,
+  trackW: number,
+  boxes: Map<bigint, BarBox>
+): HTMLElement {
   const tasks = app.snapshot.tasksByLane.get(lane.id) ?? [];
   const selected = app.selection.kind === 'lane' && app.selection.id === lane.id;
   const fresh = isFresh('lane', lane.id);
@@ -251,26 +382,31 @@ function renderLane(app: PlannerApp, lane: Lane, trackW: number): HTMLElement {
     createTaskAt(app, lane.id, day);
   });
 
-  for (const task of tasks) track.append(renderBar(app, task, lane));
+  for (const task of tasks) {
+    const box = boxes.get(task.id);
+    if (box) track.append(renderBar(app, task, lane, box));
+  }
   row.append(track);
   return row;
 }
 
-function renderBar(app: PlannerApp, task: Task, lane: Lane): HTMLElement {
-  const dayW = app.dayWidth;
+function renderBar(app: PlannerApp, task: Task, lane: Lane, box: BarBox): HTMLElement {
   const selected = app.selection.kind === 'task' && app.selection.id === task.id;
-  const width = Math.max(1, task.durationDays) * dayW;
+  const width = box.width;
   const fresh = isFresh('task', task.id);
 
+  const thin = box.height < 24;
   const bar = el('div', {
-    class: `bar${selected ? ' selected' : ''}${task.percentComplete >= 100 ? ' done' : ''}${fresh ? ' enter' : ''}`,
+    class: `bar${selected ? ' selected' : ''}${task.percentComplete >= 100 ? ' done' : ''}${fresh ? ' enter' : ''}${thin ? ' thin' : ''}`,
     'data-task-id': String(task.id),
     title: `${task.name} — ${formatDay(task.startDay)} → ${formatDay(
       lastDay(task.startDay, task.durationDays)
     )} (${task.durationDays}d, ${task.percentComplete}%)`,
   });
-  bar.style.left = px((task.startDay - app.originDay) * dayW);
+  bar.style.left = px(box.left);
   bar.style.width = px(width);
+  bar.style.top = px(box.top);
+  bar.style.height = px(box.height);
   bar.style.background = mix('#0c1211', lane.colour, 0.22);
   bar.style.borderColor = rgba(lane.colour, selected ? 0.95 : 0.55);
 
@@ -294,9 +430,11 @@ function renderBar(app: PlannerApp, task: Task, lane: Lane): HTMLElement {
   }
   bar.append(badge);
 
-  // Assigned avatars ride the bar, so who is on what is readable without selecting anything.
+  // Assigned avatars ride the bar, so who is on what is readable without selecting anything —
+  // but a bar squeezed thin by a stack of overlapping tasks doesn't have the room to also carry
+  // avatars without them landing on top of the label.
   const people = app.snapshot.peopleByTask.get(task.id) ?? [];
-  if (people.length > 0 && width >= 96) {
+  if (people.length > 0 && width >= 96 && box.height >= 30) {
     const strip = el('div', { class: 'bar-people' });
     for (const person of people.slice(0, 3)) {
       strip.append(miniAvatar(person.avatarColour, person.initials, person.name));
@@ -311,7 +449,7 @@ function renderBar(app: PlannerApp, task: Task, lane: Lane): HTMLElement {
   // stray click while panning or reaching for a drag handle silently rewrote a task's
   // progress, and a reducer round-trip is not something to fire by accident. Select the task
   // and the slider appears here; the inspector always carries one either way.
-  if (selected && width >= 120) {
+  if (selected && width >= 120 && box.height >= 24) {
     const slider = el('input', {
       class: 'bar-slider',
       type: 'range',
@@ -528,8 +666,70 @@ function beginBarDrag(
   bar.addEventListener('pointercancel', onUp);
 }
 
-/** Predecessor arrows: from the end of the earlier bar to the start of the later one. */
-function renderDependencies(app: PlannerApp, trackW: number): SVGSVGElement {
+/** An obstacle for line-routing: one bar's horizontal extent, padded by `LINE_GUTTER`, tagged
+ *  with the lane row it sits in. */
+interface Obstacle {
+  laneRow: number;
+  left: number;
+  right: number;
+}
+
+function intersects(a: number, b: number, o: Obstacle): boolean {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  return o.right > lo && o.left < hi;
+}
+
+/**
+ * Picks where the elbow's vertical run crosses from the predecessor's row to the successor's —
+ * the one place the previous version of this line just picked the geometric midpoint, which had
+ * no idea whether some third task's bar happened to be sitting there. Tries the natural midpoint
+ * first (so the common, empty-corridor case looks exactly as it always has), then walks outward
+ * in small steps until it finds an x where: the horizontal run in the FROM row (`x1` to that x)
+ * is clear, the horizontal run in the TO row (that x to `x2`) is clear, and every row strictly
+ * between the two has nothing sitting exactly on that column (the vertical run passes straight
+ * through those rows top to bottom). Gives up and falls back to the old heuristic only if the
+ * whole search window is obstructed, which needs a lane packed edge to edge to happen at all.
+ */
+function routeMidX(
+  x1: number,
+  x2: number,
+  fromRow: number,
+  toRow: number,
+  obstacles: Obstacle[]
+): number {
+  const fallback = x2 > x1 + 16 ? (x1 + x2) / 2 : x1 + 12;
+  const rowLo = Math.min(fromRow, toRow);
+  const rowHi = Math.max(fromRow, toRow);
+
+  const valid = (mid: number): boolean => {
+    for (const o of obstacles) {
+      if (o.laneRow === fromRow && intersects(x1, mid, o)) return false;
+      if (o.laneRow === toRow && intersects(mid, x2, o)) return false;
+      if (o.laneRow > rowLo && o.laneRow < rowHi && mid > o.left && mid < o.right) return false;
+    }
+    return true;
+  };
+
+  if (valid(fallback)) return fallback;
+
+  const lo = Math.min(x1, x2) - 24;
+  const hi = Math.max(x1, x2) + 24;
+  const STEP = 4;
+  for (let d = STEP; d <= hi - lo; d += STEP) {
+    if (fallback + d <= hi && valid(fallback + d)) return fallback + d;
+    if (fallback - d >= lo && valid(fallback - d)) return fallback - d;
+  }
+  return fallback;
+}
+
+/** Predecessor arrows: from the end of the earlier bar to the start of the later one, routed
+ *  through whatever deadspace `routeMidX` can find rather than straight through the midpoint. */
+function renderDependencies(
+  app: PlannerApp,
+  trackW: number,
+  boxes: Map<bigint, BarBox>
+): SVGSVGElement {
   const NS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(NS, 'svg');
   svg.setAttribute('class', 'deps');
@@ -554,28 +754,32 @@ function renderDependencies(app: PlannerApp, trackW: number): SVGSVGElement {
   defs.append(marker);
   svg.append(defs);
 
-  const laneRow = new Map<bigint, number>();
-  app.snapshot.lanes.forEach((lane, index) => laneRow.set(lane.id, index));
-
   for (const task of app.snapshot.tasks) {
     if (task.predecessorId === 0n) continue;
     const from = app.snapshot.taskById.get(task.predecessorId);
     if (!from) continue;
-    const fromRow = laneRow.get(from.laneId);
-    const toRow = laneRow.get(task.laneId);
-    if (fromRow === undefined || toRow === undefined) continue;
+    const fromBox = boxes.get(from.id);
+    const toBox = boxes.get(task.id);
+    if (!fromBox || !toBox) continue;
 
-    const x1 = (from.startDay + Math.max(1, from.durationDays) - app.originDay) * app.dayWidth;
-    const y1 = fromRow * LANE_H + LANE_H / 2;
-    const x2 = (task.startDay - app.originDay) * app.dayWidth;
-    const y2 = toRow * LANE_H + LANE_H / 2;
-    const midX = x2 > x1 + 16 ? (x1 + x2) / 2 : x1 + 12;
+    const x1 = fromBox.left + fromBox.width;
+    const y1 = fromBox.laneRow * LANE_H + fromBox.top + fromBox.height / 2;
+    const x2 = toBox.left;
+    const y2 = toBox.laneRow * LANE_H + toBox.top + toBox.height / 2;
+
+    const obstacles: Obstacle[] = [];
+    for (const [id, box] of boxes) {
+      if (id === from.id || id === task.id) continue;
+      obstacles.push({
+        laneRow: box.laneRow,
+        left: box.left - LINE_GUTTER,
+        right: box.left + box.width + LINE_GUTTER,
+      });
+    }
+    const midX = routeMidX(x1, x2, fromBox.laneRow, toBox.laneRow, obstacles);
 
     const path = document.createElementNS(NS, 'path');
-    path.setAttribute(
-      'd',
-      `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`
-    );
+    path.setAttribute('d', `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`);
     path.setAttribute('fill', 'none');
     path.setAttribute('stroke', 'rgba(120,150,145,0.55)');
     path.setAttribute('stroke-width', '1.5');

@@ -303,6 +303,13 @@ async function boot(): Promise<void> {
   window.setTimeout(() => app.scrollToDay(today()), 400);
   // If the database never answers, this is the render that lets the window report in anyway.
   window.setTimeout(() => app.requestRender(), 6100);
+
+  // The "now" sweep in chart.ts's renderNowLine reads the clock fresh on every render, so keeping
+  // it visibly moving is just a matter of asking for renders now and then. Once a minute is far
+  // more often than the line's own motion needs — a day column moves by a fraction of a pixel per
+  // tick even at max zoom — but it's cheap, and it's what keeps the line honest if this tab is
+  // left open across midnight.
+  window.setInterval(() => app.requestRender(), 60_000);
 }
 
 void boot().catch(error => {

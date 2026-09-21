@@ -28,6 +28,11 @@ export function today(): number {
   return Math.floor(Date.now() / MS_PER_DAY);
 }
 
+/** How far into today it is, in UTC: 0 at midnight, just under 1 a moment before the next one. */
+export function fractionOfDay(): number {
+  return (Date.now() % MS_PER_DAY) / MS_PER_DAY;
+}
+
 /** `2026-01-12` — the value an `<input type="date">` wants. */
 export function toIso(day: number): string {
   return dayToDate(day).toISOString().slice(0, 10);
