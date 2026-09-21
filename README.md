@@ -1,19 +1,82 @@
 # Vertico Planner
 
-A small Gantt planner — personnel, lanes, task bars, drag-to-assign — that keeps its data in its
-own SpacetimeDB database on this machine.
+### 🔗 [Open the live planner](https://beurar.github.io/vertico-planner/) — the whole team uses this link
 
-This repository currently holds **the module** (`module/`), which is the whole write path. The
-Electron app that draws the chart lands beside it in `app/`.
+A small Gantt planner — personnel, lanes, task bars, drag-to-assign — backed by SpacetimeDB.
+
+The team version above runs entirely in the browser (no install) and talks to a shared database
+on SpacetimeDB **Maincloud**, so everyone sees the same plan update live. Opening a bar or a lane
+works for anyone with the link; making a change asks for the shared passphrase once per browser
+(see [Access control](#access-control)). The page checks for a newer deploy every few minutes and
+offers a one-click reload — see [Staying up to date](#staying-up-to-date).
+
+This repository holds **the module** (`module/`, the whole write path) and **the app** (`app/`,
+one renderer shared by an Electron build for local development and the browser build that's
+deployed above).
 
 > ⚠ **This is not the game.** The Vertico Universe game server lives in the database
-> `vertico-universe` on the same local SpacetimeDB host. This project's database is
-> **`vertico-planner`** and nothing here ever names the other one. `--delete-data` is only ever
-> pointed at `vertico-planner`.
+> `vertico-universe`. This project's databases are named `vertico-planner*` and nothing here ever
+> names the other one. `--delete-data` is only ever pointed at a `vertico-planner*` database.
 
 ---
 
-## Running it
+## Deployment: how the team's copy stays online
+
+Two independent pieces are deployed, and neither one is this machine:
+
+| Piece | Where | How it gets there |
+|---|---|---|
+| The module (write path) | SpacetimeDB **Maincloud**, database `vertico-planner-d6f218` | A one-off `spacetime publish`, by hand, from whoever has the CLI logged in — see below. Maincloud is a paid tier on this account, so this is deliberately not automated on every push. |
+| The app (UI) | GitHub Pages, `app/dist-web/` built by `app/build.mjs --web` | Automatic — `.github/workflows/deploy.yml` builds and publishes on every push to `main` that touches `app/`. |
+
+Republishing the module (schema or reducer changes):
+
+```bash
+spacetime publish vertico-planner-d6f218 --server maincloud --module-path ./module -y
+```
+
+Adding a table is a safe additive migration; **never pass `--delete-data` against this database**
+— unlike the local one below, it holds the real plan. If a manual migration is ever needed, do it
+by hand with `spacetime sql`, not by deleting and re-running `init`.
+
+### Access control
+
+`app_secret` and `authorized` (see `module/src/tables.rs`) are deliberately **not** `public` —
+SpacetimeDB never sends a private table to any client, by subscription or by query, so this is
+enforced by the server, not by the app hiding a button. Every mutating reducer starts with
+`require_authenticated`; reading the plan (the four tables the chart draws from) has no gate at
+all. `authenticate(passphrase)` adds the caller's identity to `authorized` on a correct guess, and
+that identity — one per browser, via the token `connection.ts` keeps in `localStorage` — stays
+authorised until the database is wiped, so nobody re-enters it every visit.
+
+The passphrase itself is **not** in this repository, on purpose — a real credential does not
+belong in source control, even a public one. `app_secret.passphrase` starts empty on a fresh
+database; set or change it directly against the database, which needs the CLI logged in as the
+database's owner:
+
+```bash
+spacetime sql --server maincloud vertico-planner-d6f218 "UPDATE app_secret SET passphrase = '...' WHERE id = 1"
+```
+
+Share the value with the team over whatever channel you already trust with internal-only info
+(not a public place) — anyone downstream of that message can make changes; anyone with the link
+alone can only look.
+
+### Staying up to date
+
+`app/web/update-check.js` polls `version.json` (rewritten by the deploy workflow with the commit
+just published) every few minutes and shows a small "Reload" banner the moment it disagrees with
+the version the tab was loaded with. It never reloads on its own — forcing a reload out from under
+someone mid-drag would be worse than a tab that's a few minutes stale — so a teammate who leaves a
+tab open across a deploy has to click through once, deliberately.
+
+---
+
+## Running it locally
+
+For development, or to try a change before it reaches the team. This talks to a **local**
+SpacetimeDB server, entirely separate from the Maincloud database above — nothing you do here
+touches the team's plan.
 
 The module needs a local SpacetimeDB server. Start it detached and leave it running:
 
@@ -27,14 +90,19 @@ Publish the module:
 spacetime publish vertico-planner --server local --module-path ./module -y
 ```
 
-The first publish runs `init`, which seeds four default lanes so the chart is not a blank grid.
-Add `--delete-data=always` to start from nothing again — it re-runs `init`, and it is safe here
-because this database holds only the plan.
+The first publish runs `init`, which seeds four default lanes (and an empty `app_secret` row) so
+the chart is not a blank grid. Add `--delete-data=always` to start from nothing again — it re-runs
+`init`, and it is safe here because this database holds only local test data. After any publish
+that (re-)creates `app_secret`, set a local passphrase before the app can write anything:
+
+```bash
+spacetime sql vertico-planner "UPDATE app_secret SET passphrase = 'local-dev' WHERE id = 1"
+```
 
 Prove the write path end to end:
 
 ```bash
-bash tools/roundtrip.sh          # 41 assertions: every reducer, and every refusal
+ROUNDTRIP_PASSPHRASE=local-dev bash tools/roundtrip.sh    # 44 assertions: every reducer, every refusal, the gate itself
 ```
 
 Look at the data at any time:
@@ -48,6 +116,24 @@ Generate typed client bindings for the app (verified working on CLI 2.8.3):
 
 ```bash
 spacetime generate --lang typescript --out-dir app/src/module_bindings --module-path ./module -y
+```
+
+Private tables (`app_secret`, `authorized`) are silently skipped by `generate` — that's correct,
+not a bug: there is nothing for a client to bind to on a table it can never see.
+
+Run the Electron app against local (`app/`):
+
+```bash
+cd app && npm ci && npm start
+```
+
+Or build and serve the same browser bundle the team uses, against local — `bridge.js` points at
+Maincloud by default, so for a throwaway local check edit the `uri`/`database` in
+`app/web/bridge.js` (don't commit that change):
+
+```bash
+cd app && npm run build:web
+python -m http.server 8123 --directory dist-web    # then open http://127.0.0.1:8123
 ```
 
 Compile-check the module without publishing:
@@ -67,7 +153,9 @@ SpacetimeDB, so they can be unit-tested by host-mounting that one file into a sc
 
 ## The data model
 
-Four tables, all public — there is one user and the app subscribes to everything.
+Six tables. The four the app draws from are public — everyone subscribes to all of them, and
+there is no per-user data to hide. Two more, `app_secret` and `authorized`, are deliberately
+**not** public — see [Access control](#access-control).
 
 | Table | Columns |
 |---|---|
@@ -75,6 +163,8 @@ Four tables, all public — there is one user and the app subscribes to everythi
 | `lane` | `id`, `name`, `colour`, `sort_order` |
 | `task` | `id`, `lane_id`, `name`, `start_day`, `duration_days`, `percent_complete`, `predecessor_id` |
 | `assignment` | `id`, `task_id`, `person_id` |
+| `app_secret` *(private)* | `id`, `passphrase` |
+| `authorized` *(private)* | `identity` |
 
 Two decisions worth knowing before you read the code:
 
@@ -95,19 +185,24 @@ assigns when the field is 0.
 
 ## Reducers are the only write path
 
-Twenty of them. Each returns `Result<(), String>` and **refuses with a sentence** rather than
-clamping a bad value, which is what makes optimistic dragging safe: the app moves the bar
-immediately, the reducer either commits or refuses, and a refusal leaves the row untouched so the
-subscription pushes the old row straight back and the bar snaps.
+Twenty-one of them. Every one but `authenticate` itself returns `Result<(), String>` and
+**refuses with a sentence** rather than clamping a bad value, which is what makes optimistic
+dragging safe: the app moves the bar immediately, the reducer either commits or refuses, and a
+refusal leaves the row untouched so the subscription pushes the old row straight back and the bar
+snaps.
 
 | Group | Reducers |
 |---|---|
+| Access | `authenticate` |
 | People | `create_person`, `update_person`, `delete_person` |
 | Lanes | `create_lane`, `update_lane`, `set_lane_colour`, `reorder_lane`, `delete_lane` |
 | Tasks | `create_task`, `update_task`, `delete_task` |
 | Gestures | `set_task_percent`, `move_task`, `resize_task`, `move_task_to_lane`, `set_task_predecessor` |
 | Assignment | `assign_person`, `unassign_person` |
 | Whole plan | `wipe_plan`, `import_plan` |
+
+Every reducer but `authenticate` starts with `require_authenticated(ctx)?` — see
+[Access control](#access-control).
 
 Each drag gesture has its own narrow reducer instead of going through `update_task`, because a
 drag sends a burst of them and a full-row update would carry — and re-assert — the fields the
@@ -128,6 +223,8 @@ drag never touched.
 | a dependency loop of any length | `Task 6 already depends on task 5; that would make a cycle` |
 | the same avatar dropped twice | `Ada Lovelace is already assigned to "Survey the site"` |
 | deleting a lane that holds tasks | `Lane "Build" still holds 2 task(s); move or delete them first` |
+| any write before `authenticate` succeeds | `Enter the shared passphrase first` |
+| the wrong passphrase | `Incorrect passphrase` |
 
 Two things are normalised rather than refused, and both are deliberate: a colour is lower-cased,
 so `#3EE8B0` and `#3ee8b0` are one value; and blank initials are derived from the name, because
@@ -140,12 +237,15 @@ work on one misplaced click, and there is no undo.
 
 ---
 
-## Local save
+## Export, Import, and local save
 
-Nothing leaves this machine: the server listens on `127.0.0.1:3000` and the app talks to it over
-a loopback WebSocket. The app is nevertheless dead when the server is down, so it must say so
-rather than swallow edits — and `wipe_plan` / `import_plan` are the write half of Export/Import
-JSON, so a plan can be backed up to a real file and restored into an empty database.
+The team's plan lives on Maincloud, not on any one person's machine — see
+[Deployment](#deployment-how-the-teams-copy-stays-online). Locally (`Running it locally` above)
+nothing leaves the machine at all: the server listens on `127.0.0.1:3000` and the app talks to it
+over a loopback WebSocket. Either way the app is dead when its server is unreachable, so it must
+say so rather than swallow edits — and `wipe_plan` / `import_plan` are the write half of
+Export/Import JSON, so a plan can be backed up to a real file and restored into an empty database
+regardless of which database it's talking to.
 
 `import_plan` **remaps ids** instead of restoring them: an exported file's ids sit beside an
 `#[auto_inc]` sequence that never issued them, and re-inserting them verbatim would eventually
@@ -164,13 +264,23 @@ module/
   Cargo.toml
   src/
     lib.rs            module docs, the `init` seed
-    tables.rs         the four tables
+    tables.rs         the six tables (four public, two private — see Access control)
     validate.rs       pure field validators (host-testable, refuse-never-clamp)
     reducers/
-      mod.rs          shared lookups, the predecessor cycle walk
+      mod.rs          shared lookups, the predecessor cycle walk, authenticate, require_authenticated
       people.rs  lanes.rs  tasks.rs  assignments.rs  plan_io.rs
 tools/
   roundtrip.sh        the acceptance harness
+app/
+  main.js  preload.js  index.html     Electron build (local dev)
+  web/
+    index.html                        the page GitHub Pages actually serves
+    bridge.js                         window.planner, browser-native (download/file-input, Maincloud config)
+    update-check.js                   polls version.json, offers a reload
+  src/renderer/                       shared by both builds — chart, drag gestures, auth.ts (the passphrase modal)
+  build.mjs                           `node build.mjs` (Electron) or `--web` (dist-web/, GitHub Pages)
+.github/workflows/
+  deploy.yml          builds app/ and publishes dist-web/ to GitHub Pages on every push to main
 ```
 
 ⚠ The reducer submodules are **plural** on purpose. `#[table(accessor = task, ...)]` generates a
