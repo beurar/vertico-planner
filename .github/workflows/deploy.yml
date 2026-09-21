@@ -1,0 +1,73 @@
+name: Deploy planner to GitHub Pages
+
+# Builds `app/` (the browser build — see `app/build.mjs --web`) and publishes `app/dist-web/` to
+# GitHub Pages. Only the frontend deploys here: the SpacetimeDB module it talks to is published
+# separately with `spacetime publish`, from a machine that has the CLI and is logged in — see the
+# README. `version.json` is written fresh on every run with this run's commit, which is what
+# `app/web/update-check.js` polls to offer a reload once a newer deploy has landed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; a second push while one is running waits rather than races
+# it, but never cancels a deployment already in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Type-check
+        working-directory: app
+        run: npm run typecheck
+
+      - name: Build web target
+        working-directory: app
+        run: npm run build:web
+
+      - name: Write version.json
+        run: |
+          printf '{"commit":"%s","builtAt":"%s"}\n' \
+            "${{ github.sha }}" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > app/dist-web/version.json
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: app/dist-web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

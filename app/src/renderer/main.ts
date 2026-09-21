@@ -9,6 +9,7 @@
 //     nothing on the server, so the next render paints the old values and the bar snaps back.
 //   * A refusal is a sentence written for a human. It is shown verbatim.
 
+import { isAuthRefusal, showPassphraseGate } from './auth';
 import { HEAD_W, createTaskAt, installChartMetrics, renderChart } from './chart';
 import { PlannerConnection, refusalText } from './connection';
 import { today } from './dates';
@@ -130,7 +131,11 @@ async function boot(): Promise<void> {
         return true;
       } catch (error) {
         const text = refusalText(error);
-        if (!options.ignore || !options.ignore.test(text)) app.say(text, 'error');
+        if (isAuthRefusal(text)) {
+          showPassphraseGate(app);
+        } else if (!options.ignore || !options.ignore.test(text)) {
+          app.say(text, 'error');
+        }
         // The row never changed, so re-rendering is what puts a dragged bar back where it was.
         app.requestRender();
         return false;

@@ -10,6 +10,12 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
+export const AppSecret = __t.object("AppSecret", {
+  id: __t.u8(),
+  passphrase: __t.string(),
+});
+export type AppSecret = __Infer<typeof AppSecret>;
+
 export const Assignment = __t.object("Assignment", {
   id: __t.u64(),
   taskId: __t.u64(),
@@ -22,6 +28,11 @@ export const AssignmentImport = __t.object("AssignmentImport", {
   personId: __t.u64(),
 });
 export type AssignmentImport = __Infer<typeof AssignmentImport>;
+
+export const Authorized = __t.object("Authorized", {
+  identity: __t.identity(),
+});
+export type Authorized = __Infer<typeof Authorized>;
 
 export const Lane = __t.object("Lane", {
   id: __t.u64(),

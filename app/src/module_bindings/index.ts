@@ -35,6 +35,7 @@ import {
 
 // Import all reducer arg schemas
 import AssignPersonReducer from "./assign_person_reducer";
+import AuthenticateReducer from "./authenticate_reducer";
 import CreateLaneReducer from "./create_lane_reducer";
 import CreatePersonReducer from "./create_person_reducer";
 import CreateTaskReducer from "./create_task_reducer";
@@ -125,6 +126,7 @@ const tablesSchema = __schema({
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
   __reducerSchema("assign_person", AssignPersonReducer),
+  __reducerSchema("authenticate", AuthenticateReducer),
   __reducerSchema("create_lane", CreateLaneReducer),
   __reducerSchema("create_person", CreatePersonReducer),
   __reducerSchema("create_task", CreateTaskReducer),

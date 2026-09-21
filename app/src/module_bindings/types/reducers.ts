@@ -7,6 +7,7 @@ import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
 import AssignPersonReducer from "../assign_person_reducer";
+import AuthenticateReducer from "../authenticate_reducer";
 import CreateLaneReducer from "../create_lane_reducer";
 import CreatePersonReducer from "../create_person_reducer";
 import CreateTaskReducer from "../create_task_reducer";
@@ -28,6 +29,7 @@ import UpdateTaskReducer from "../update_task_reducer";
 import WipePlanReducer from "../wipe_plan_reducer";
 
 export type AssignPersonParams = __Infer<typeof AssignPersonReducer>;
+export type AuthenticateParams = __Infer<typeof AuthenticateReducer>;
 export type CreateLaneParams = __Infer<typeof CreateLaneReducer>;
 export type CreatePersonParams = __Infer<typeof CreatePersonReducer>;
 export type CreateTaskParams = __Infer<typeof CreateTaskReducer>;

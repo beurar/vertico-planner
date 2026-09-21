@@ -4,6 +4,7 @@ target/
 # Node / Electron (the app lands in PLAN-2)
 node_modules/
 dist/
+dist-web/
 out/
 
 # Editors and OS
