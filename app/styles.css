@@ -545,16 +545,16 @@ body {
 
 /*
  * The precise "now" sweep — a glowing line at the actual time of day, with an animated, masked
- * trail fading out behind it (earlier today). Deliberately a sibling of `.grid`, not a child of
- * it: `.grid` is z-index 0 and establishes its own stacking context, so nothing inside it can
- * ever paint above `.lane`/`.deps` regardless of its own z-index. This sits outside that context
- * specifically so the line stays visible over bars and dependency arrows instead of vanishing
- * under whatever happens to be scheduled today.
+ * trail fading out behind it (earlier today). A sibling of `.grid` rather than a child of it (so
+ * its own z-index applies at all — `.grid` establishes its own stacking context, and nothing
+ * inside one can outrank that context's siblings regardless of its own z-index), but pinned below
+ * `.lane` (z-index 1) and `.deps` (z-index 2) on purpose: it reads as part of the chart's
+ * background grid, not as an overlay that cuts across whatever's scheduled today.
  */
 .now-layer {
   position: absolute;
   top: 0;
-  z-index: 3;
+  z-index: 0;
   pointer-events: none;
   overflow: visible;
 }

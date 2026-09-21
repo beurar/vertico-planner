@@ -270,8 +270,8 @@ function renderLanes(app: PlannerApp, host: HTMLElement, trackW: number): void {
 
   host.append(renderDependencies(app, trackW, boxes));
 
-  // Above everything, including the dependency arrows: a glance has to find "now" without caring
-  // what happens to be plotted on top of it today.
+  // Under the bars and the dependency arrows (see .now-layer's z-index in styles.css) — this is
+  // chart backdrop, not an overlay that should cut across whatever's scheduled today.
   if (todayIndex >= 0 && todayIndex < dayCount) {
     host.append(renderNowLine(app, todayIndex, dayWidth));
   }
@@ -283,12 +283,13 @@ function renderLanes(app: PlannerApp, host: HTMLElement, trackW: number): void {
 }
 
 /**
- * The precise "now" marker: a glowing line at the actual time of day, riding above every bar and
+ * The precise "now" marker: a glowing line at the actual time of day, sitting under every bar and
  * arrow, with a masked, animated trail fading out behind it (earlier today) so the sweep reads as
  * motion, not just a static mark. `todayIndex`/`dayWidth` place it in the same track-relative
  * coordinate space `renderLanes`'s other overlays use; `HEAD_W` shifts it into the lanes
- * container's own space, since — unlike `.grid`'s children — this sits outside `.grid` on
- * purpose, to escape its stacking context and actually paint on top.
+ * container's own space. It sits outside `.grid` (a sibling, not a child) purely so its own
+ * z-index takes effect at all — a child of `.grid` would be trapped in that element's own
+ * stacking context regardless of what z-index it's given.
  */
 function renderNowLine(app: PlannerApp, todayIndex: number, dayWidth: number): HTMLElement {
   const frac = fractionOfDay();
