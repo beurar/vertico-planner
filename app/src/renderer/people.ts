@@ -5,6 +5,7 @@
 // small enough that every subscriber gets the whole table for nothing.
 
 import { assignPersonToTask, taskUnderPoint } from './chart';
+import { isFresh, puff } from './fx';
 import { isAssigned, type Person } from './store';
 import type { PlannerApp } from './types';
 import { clear, el, readableOn } from './ui';
@@ -29,8 +30,9 @@ export function renderPeople(app: PlannerApp, host: HTMLElement): void {
     const load = app.snapshot.assignments.filter(a => a.personId === person.id).length;
     const selected = app.selection.kind === 'person' && app.selection.id === person.id;
 
+    const fresh = isFresh('person', person.id);
     const card = el('div', {
-      class: `person${selected ? ' selected' : ''}`,
+      class: `person${selected ? ' selected' : ''}${fresh ? ' enter' : ''}`,
       'data-person-id': String(person.id),
       title: `${person.name}${person.role ? ` — ${person.role}` : ''}`,
     });
@@ -130,7 +132,13 @@ function beginAvatarDrag(
     }
 
     const task = taskUnderPoint(app, event.clientX, event.clientY);
-    if (task) assignPersonToTask(app, task.id, person.id);
+    if (task) {
+      const dropX = event.clientX;
+      const dropY = event.clientY;
+      void assignPersonToTask(app, task.id, person.id).then(ok => {
+        if (ok) puff(dropX, dropY, person.avatarColour);
+      });
+    }
     app.requestRender();
   };
 

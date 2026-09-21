@@ -14,6 +14,7 @@ import {
   monthLabel,
   today,
 } from './dates';
+import { isFresh, puff, celebrate } from './fx';
 import { isAssigned, type Lane, type Task } from './store';
 import type { PlannerApp } from './types';
 import { clamp, clear, el, mix, rgba, readableOn } from './ui';
@@ -42,6 +43,33 @@ export function installChartMetrics(): void {
   root.setProperty('--lane-h', `${LANE_H}px`);
   root.setProperty('--bar-h', `${BAR_H}px`);
   root.setProperty('--head-w', `${HEAD_W}px`);
+}
+
+/**
+ * Changes `app.dayWidth` to `newDayWidth` while keeping the day under `clientX` under `clientX` —
+ * the difference between a zoom that feels controlled and one that flings the chart sideways
+ * every time you touch it. The scroll correction has to wait for the render the new width causes
+ * (that's what actually changes the track's scrollable size), so it rides a second animation
+ * frame queued right behind the render's own.
+ */
+export function zoomAt(
+  app: PlannerApp,
+  scroll: HTMLElement,
+  clientX: number,
+  newDayWidth: number
+): void {
+  if (newDayWidth === app.dayWidth) return;
+  const rect = scroll.getBoundingClientRect();
+  const offsetInTrack = clientX - rect.left + scroll.scrollLeft - HEAD_W;
+  const dayUnderPointer = app.originDay + offsetInTrack / app.dayWidth;
+
+  app.dayWidth = newDayWidth;
+  app.requestRender();
+
+  requestAnimationFrame(() => {
+    const targetLeft = (dayUnderPointer - app.originDay) * app.dayWidth + HEAD_W;
+    scroll.scrollLeft = Math.max(0, targetLeft - (clientX - rect.left));
+  });
 }
 
 /** Chooses the window of days to draw, and writes it back onto the app for hit-testing. */
@@ -133,9 +161,13 @@ function renderLanes(app: PlannerApp, host: HTMLElement, trackW: number): void {
     band.style.width = px(dayWidth);
     grid.append(band);
   }
-  const nowLine = el('div', { class: 'grid-today' });
-  nowLine.style.left = px((today() - originDay) * dayWidth);
-  grid.append(nowLine);
+  const todayIndex = today() - originDay;
+  if (todayIndex >= 0 && todayIndex < dayCount) {
+    const nowBand = el('div', { class: 'grid-today' });
+    nowBand.style.left = px(todayIndex * dayWidth);
+    nowBand.style.width = px(dayWidth);
+    grid.append(nowBand);
+  }
   host.append(grid);
 
   for (const lane of snapshot.lanes) {
@@ -164,8 +196,12 @@ function markPanningLabels(host: HTMLElement): void {
 function renderLane(app: PlannerApp, lane: Lane, trackW: number): HTMLElement {
   const tasks = app.snapshot.tasksByLane.get(lane.id) ?? [];
   const selected = app.selection.kind === 'lane' && app.selection.id === lane.id;
+  const fresh = isFresh('lane', lane.id);
 
-  const row = el('div', { class: `lane${selected ? ' selected' : ''}`, 'data-lane-id': String(lane.id) });
+  const row = el('div', {
+    class: `lane${selected ? ' selected' : ''}${fresh ? ' enter' : ''}`,
+    'data-lane-id': String(lane.id),
+  });
 
   const head = el('div', { class: 'lane-head' });
   head.style.borderLeftColor = lane.colour;
@@ -224,9 +260,10 @@ function renderBar(app: PlannerApp, task: Task, lane: Lane): HTMLElement {
   const dayW = app.dayWidth;
   const selected = app.selection.kind === 'task' && app.selection.id === task.id;
   const width = Math.max(1, task.durationDays) * dayW;
+  const fresh = isFresh('task', task.id);
 
   const bar = el('div', {
-    class: `bar${selected ? ' selected' : ''}${task.percentComplete >= 100 ? ' done' : ''}`,
+    class: `bar${selected ? ' selected' : ''}${task.percentComplete >= 100 ? ' done' : ''}${fresh ? ' enter' : ''}`,
     'data-task-id': String(task.id),
     title: `${task.name} — ${formatDay(task.startDay)} → ${formatDay(
       lastDay(task.startDay, task.durationDays)
@@ -306,12 +343,14 @@ function renderBar(app: PlannerApp, task: Task, lane: Lane): HTMLElement {
     });
     slider.addEventListener('change', () => {
       app.dragging = false;
+      const value = Number(slider.value);
+      const justFinished = value >= 100 && task.percentComplete < 100;
+      const rect = justFinished ? bar.getBoundingClientRect() : null;
       void app.call(() =>
-        app.conn!.reducers.setTaskPercent({
-          taskId: task.id,
-          percentComplete: Number(slider.value),
-        })
-      );
+        app.conn!.reducers.setTaskPercent({ taskId: task.id, percentComplete: value })
+      ).then(ok => {
+        if (ok && rect) celebrate(rect.left + rect.width / 2, rect.top + rect.height / 2, lane.colour);
+      });
     });
     bar.append(slider);
   }
@@ -325,7 +364,7 @@ function renderBar(app: PlannerApp, task: Task, lane: Lane): HTMLElement {
     const offset = event.clientX - rect.left;
     const mode: DragMode =
       offset <= GRIP_W ? 'resize-left' : offset >= rect.width - GRIP_W ? 'resize-right' : 'move';
-    beginBarDrag(app, event, task, bar, mode);
+    beginBarDrag(app, event, task, lane, bar, mode);
   });
 
   return bar;
@@ -350,6 +389,7 @@ function beginBarDrag(
   app: PlannerApp,
   down: PointerEvent,
   task: Task,
+  lane: Lane,
   bar: HTMLElement,
   mode: DragMode
 ): void {
@@ -442,9 +482,13 @@ function beginBarDrag(
     const laneChanged = curLaneIndex !== laneIndex && laneIndex >= 0;
     const startChanged = curStart !== task.startDay;
     const durationChanged = curDuration !== task.durationDays;
+    // Captured before the awaits below: `bar` still sits exactly where the drag left it, and by
+    // the time a reducer answers, a re-render may already have replaced the node it belongs to.
+    const dropRect = bar.getBoundingClientRect();
+    let committed = false;
 
     if (laneChanged) {
-      await app.call(() =>
+      committed = await app.call(() =>
         app.conn!.reducers.moveTaskToLane({
           taskId: task.id,
           laneId: lanes[curLaneIndex].id,
@@ -457,17 +501,22 @@ function beginBarDrag(
       const movedOk = startChanged
         ? await app.call(() => app.conn!.reducers.moveTask({ taskId: task.id, startDay: curStart }))
         : true;
+      committed = movedOk;
       if (movedOk && durationChanged) {
-        await app.call(() =>
+        committed = await app.call(() =>
           app.conn!.reducers.resizeTask({ taskId: task.id, durationDays: curDuration })
         );
       }
     } else if (startChanged) {
-      await app.call(() => app.conn!.reducers.moveTask({ taskId: task.id, startDay: curStart }));
+      committed = await app.call(() => app.conn!.reducers.moveTask({ taskId: task.id, startDay: curStart }));
     } else if (durationChanged) {
-      await app.call(() =>
+      committed = await app.call(() =>
         app.conn!.reducers.resizeTask({ taskId: task.id, durationDays: curDuration })
       );
+    }
+
+    if (committed) {
+      puff(dropRect.left + dropRect.width / 2, dropRect.top + dropRect.height / 2, lane.colour);
     }
 
     // Whether it committed or was refused, the next paint comes from the rows.
@@ -566,14 +615,22 @@ export function taskUnderPoint(app: PlannerApp, x: number, y: number): Task | nu
   return app.snapshot.taskById.get(BigInt(id)) ?? null;
 }
 
-/** Assigns, unless the row already exists — the drop the server would refuse is simply not made. */
-export function assignPersonToTask(app: PlannerApp, taskId: bigint, personId: bigint): void {
+/**
+ * Assigns, unless the row already exists — the drop the server would refuse is simply not made.
+ * Resolves `true` only on an actual commit, which is what a drop's own puff of feedback should be
+ * conditioned on: a drop nobody's identity ever reaches the server for should stay silent.
+ */
+export function assignPersonToTask(
+  app: PlannerApp,
+  taskId: bigint,
+  personId: bigint
+): Promise<boolean> {
   if (!app.conn) {
     app.say('Not connected — nobody was assigned.', 'error');
-    return;
+    return Promise.resolve(false);
   }
-  if (isAssigned(app.snapshot, taskId, personId)) return;
-  void app.call(
+  if (isAssigned(app.snapshot, taskId, personId)) return Promise.resolve(false);
+  return app.call(
     () => app.conn!.reducers.assignPerson({ taskId, personId }),
     // Belt and braces: two drops in the same frame race the subscription, and the second one
     // being refused is not an error worth a toast.

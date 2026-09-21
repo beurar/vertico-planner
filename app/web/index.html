@@ -10,12 +10,13 @@
 
       `'unsafe-eval'` is not a choice here either: the SpacetimeDB TypeScript SDK compiles a BSATN
       encoder/decoder per row type with `Function(...)`. `connect-src` names the shared Maincloud
-      database this page talks to — see `bridge.js` for why the passphrase gate, not this list, is
-      what actually protects it.
+      database this page talks to, plus `'self'` for `update-check.js`'s same-origin poll of
+      `version.json` — see `bridge.js` for why the passphrase gate, not this list, is what
+      actually protects the database.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src https://maincloud.spacetimedb.com wss://maincloud.spacetimedb.com"
+      content="default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://maincloud.spacetimedb.com wss://maincloud.spacetimedb.com"
     />
     <title>Vertico Planner</title>
     <link rel="stylesheet" href="styles.css" />

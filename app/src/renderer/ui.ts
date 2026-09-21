@@ -94,6 +94,11 @@ export function deriveInitials(name: string): string {
 /**
  * Refusals are shown verbatim. Every one of them is a sentence written for a human to read, so
  * nothing here parses, trims or prettifies the text.
+ *
+ * A toast is one of the few elements in this app that is genuinely created once and never rebuilt
+ * from under itself, so — unlike the chart — it can safely carry an exit animation: `.leaving` is
+ * added, `animationend` removes the node, and a fallback timeout covers a browser that never
+ * fires the event (a backgrounded tab, `prefers-reduced-motion` skipping the keyframes).
  */
 export function toast(message: string, kind: 'info' | 'error' = 'info', ms = 6000): void {
   const host = document.getElementById('toasts');
@@ -102,10 +107,20 @@ export function toast(message: string, kind: 'info' | 'error' = 'info', ms = 600
     el('span', { class: 'toast-text', text: message }),
   ]);
   const close = el('button', { class: 'toast-close', type: 'button', text: '×' });
-  close.addEventListener('click', () => node.remove());
+
+  let dismissed = false;
+  const dismiss = () => {
+    if (dismissed) return;
+    dismissed = true;
+    node.classList.add('leaving');
+    node.addEventListener('animationend', () => node.remove(), { once: true });
+    window.setTimeout(() => node.remove(), 400);
+  };
+
+  close.addEventListener('click', dismiss);
   node.append(close);
   host.append(node);
-  window.setTimeout(() => node.remove(), ms);
+  window.setTimeout(dismiss, ms);
 }
 
 export function clamp(value: number, lo: number, hi: number): number {

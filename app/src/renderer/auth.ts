@@ -70,6 +70,11 @@ export function showPassphraseGate(app: PlannerApp): void {
       submit.removeAttribute('disabled');
       input.select();
       input.focus();
+      // A restart, not a toggle: the class has to leave the element before it's added again, or
+      // a second wrong guess in a row is a no-op restyle rather than a second shake.
+      form.classList.remove('shake');
+      void form.offsetWidth;
+      form.classList.add('shake');
     }
   }
 }

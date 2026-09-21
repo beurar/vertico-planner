@@ -10,9 +10,10 @@
 //   * A refusal is a sentence written for a human. It is shown verbatim.
 
 import { isAuthRefusal, showPassphraseGate } from './auth';
-import { HEAD_W, createTaskAt, installChartMetrics, renderChart } from './chart';
+import { HEAD_W, createTaskAt, installChartMetrics, renderChart, zoomAt } from './chart';
 import { PlannerConnection, refusalText } from './connection';
 import { today } from './dates';
+import { initParticles, markFresh } from './fx';
 import { renderInspector } from './inspector';
 import { renderPeople } from './people';
 import { exportPlan, importPlan, wipePlan } from './planio';
@@ -21,10 +22,11 @@ import type { CallOptions, PlannerApp, RowKind, Selection } from './types';
 import { LANE_PALETTE, byId, clamp, toast } from './ui';
 
 const MIN_DAY_WIDTH = 8;
-const MAX_DAY_WIDTH = 64;
+const MAX_DAY_WIDTH = 200;
 
 async function boot(): Promise<void> {
   installChartMetrics();
+  initParticles();
 
   const config = (await window.planner?.config()) ?? {
     uri: 'ws://127.0.0.1:3000',
@@ -77,6 +79,7 @@ async function boot(): Promise<void> {
     },
     onChange: () => app.requestRender(),
     onInsert: (kind: RowKind, id: bigint) => {
+      markFresh(kind, id);
       if (pendingSelect && pendingSelect === kind) {
         pendingSelect = null;
         selection = { kind, id } as Selection;
@@ -225,6 +228,8 @@ async function boot(): Promise<void> {
     );
   });
 
+  const DEFAULT_DAY_WIDTH = 28;
+
   byId('btnZoomIn').addEventListener('click', () => {
     app.dayWidth = clamp(Math.round(app.dayWidth * 1.3), MIN_DAY_WIDTH, MAX_DAY_WIDTH);
     app.requestRender();
@@ -240,8 +245,41 @@ async function boot(): Promise<void> {
   byId('btnWipe').addEventListener('click', () => void wipePlan(app));
   byId('btnRetry').addEventListener('click', () => connection.retryNow());
 
+  // Ctrl/Cmd+wheel zooms the chart, anchored under the pointer — the same gesture as every other
+  // zoomable canvas, and the one a trackpad's pinch-to-zoom already arrives as (browsers report
+  // pinch as a wheel event with `ctrlKey` set, whether or not Ctrl is physically held). A plain
+  // wheel keeps meaning "scroll": overriding that would fight the pane's own panning.
+  hosts.scroll.addEventListener(
+    'wheel',
+    event => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const next = clamp(Math.round(app.dayWidth * factor), MIN_DAY_WIDTH, MAX_DAY_WIDTH);
+      zoomAt(app, hosts.scroll, event.clientX, next);
+    },
+    { passive: false }
+  );
+
   window.addEventListener('keydown', event => {
-    if (event.key === 'Escape') app.select({ kind: 'none' });
+    if (event.key === 'Escape') {
+      app.select({ kind: 'none' });
+      return;
+    }
+    // Not while someone is typing a lane name or a task's day count.
+    const target = event.target as HTMLElement | null;
+    if (target && /^(INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) return;
+
+    if (event.key === '+' || event.key === '=') {
+      app.dayWidth = clamp(Math.round(app.dayWidth * 1.3), MIN_DAY_WIDTH, MAX_DAY_WIDTH);
+      app.requestRender();
+    } else if (event.key === '-' || event.key === '_') {
+      app.dayWidth = clamp(Math.round(app.dayWidth / 1.3), MIN_DAY_WIDTH, MAX_DAY_WIDTH);
+      app.requestRender();
+    } else if (event.key === '0') {
+      app.dayWidth = DEFAULT_DAY_WIDTH;
+      app.requestRender();
+    }
   });
 
   // Anything that reaches the window during a gesture ends it, so a pointer released outside the
